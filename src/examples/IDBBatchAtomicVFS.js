@@ -32,7 +32,7 @@ function log(...args) {
  * @property {Uint8Array} data
  *
  * @property {number} [fileSize] Only present on block 0
-*/
+ */
 
 /**
  * @typedef OpenedFileEntry
@@ -40,7 +40,7 @@ function log(...args) {
  * @property {number} flags
  * @property {FileBlock} block0
  * @property {WebLocks} locks
- * 
+ *
  * @property {Set<number>} [changedPages]
  * @property {boolean} [overwrite]
  */
@@ -76,84 +76,88 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {string?} name 
-   * @param {number} fileId 
-   * @param {number} flags 
-   * @param {DataView} pOutFlags 
+   * @param {string?} name
+   * @param {number} fileId
+   * @param {number} flags
+   * @param {DataView} pOutFlags
    * @returns {number}
    */
   xOpen(name, fileId, flags, pOutFlags) {
-    return this.handleAsync(async () => {
-      if (name === null) name = `null_${fileId}`;
-      log(`xOpen ${name} 0x${fileId.toString(16)} 0x${flags.toString(16)}`);
+    return this.handleAsync(async () => this.xOpenAsync(name, fileId, flags, pOutFlags));
+  }
 
-      try {
-        // Filenames can be URLs, possibly with query parameters.
-        const url = new URL(name, 'http://localhost/');
-        /** @type {OpenedFileEntry} */ const file = {
-          path: url.pathname,
-          flags,
-          block0: null,
-          locks: new WebLocks(url.pathname)
-        };
-        this.#mapIdToFile.set(fileId, file);
+  async xOpenAsync(name, fileId, flags, pOutFlags) {
+    if (name === null) name = `null_${fileId}`;
+    log(`xOpen ${name} 0x${fileId.toString(16)} 0x${flags.toString(16)}`);
 
-        // Read the first block, which also contains the file metadata.
-        await this.#idb.run('readwrite', async ({blocks}) => {
-          file.block0 = await blocks.get(this.#bound(file, 0));
-          if (!file.block0) {
-            if (flags & VFS.SQLITE_OPEN_CREATE) {
-              file.block0 = {
-                path: file.path,
-                offset: 0,
-                version: 0,
-                data: new Uint8Array(0),
-                fileSize: 0
-              };
-              blocks.put(file.block0);
-            } else {
-              throw new Error(`file not found: ${file.path}`);
-            }
+    try {
+      // Filenames can be URLs, possibly with query parameters.
+      const url = new URL(name, 'http://localhost/');
+      /** @type {OpenedFileEntry} */ const file = {
+        path: url.pathname,
+        flags,
+        block0: null,
+        locks: new WebLocks(url.pathname)
+      };
+      this.#mapIdToFile.set(fileId, file);
+
+      // Read the first block, which also contains the file metadata.
+      await this.#idb.run('readwrite', async ({blocks}) => {
+        file.block0 = await blocks.get(this.#bound(file, 0));
+        if (!file.block0) {
+          if (flags & VFS.SQLITE_OPEN_CREATE) {
+            file.block0 = {
+              path: file.path,
+              offset: 0,
+              version: 0,
+              data: new Uint8Array(0),
+              fileSize: 0
+            };
+            blocks.put(file.block0);
+          } else {
+            throw new Error(`file not found: ${file.path}`);
           }
-        });
-        pOutFlags.setInt32(0, flags & VFS.SQLITE_OPEN_READONLY, true);
-        return VFS.SQLITE_OK;
-      } catch (e) {
-        console.error(e);
-        return VFS.SQLITE_CANTOPEN;
-      }
-    });
+        }
+      });
+      pOutFlags.setInt32(0, flags & VFS.SQLITE_OPEN_READONLY, true);
+      return VFS.SQLITE_OK;
+    } catch (e) {
+      console.error(e);
+      return VFS.SQLITE_CANTOPEN;
+    }
   }
 
   /**
-   * @param {number} fileId 
+   * @param {number} fileId
    * @returns {number}
    */
   xClose(fileId) {
-    return this.handleAsync(async () => {
-      try {
-        const file = this.#mapIdToFile.get(fileId);
-        if (file) {
-          log(`xClose ${file.path}`);
+    return this.handleAsync(async () => this.xCloseAsync(fileId));
+  }
 
-          this.#mapIdToFile.delete(fileId);
-          if (file.flags & VFS.SQLITE_OPEN_DELETEONCLOSE) {
-            this.#idb.run('readwrite', ({blocks}) => {
-              blocks.delete(IDBKeyRange.bound([file.path], [file.path, []]));
-            });
-          }
+  async xCloseAsync(fileId) {
+    try {
+      const file = this.#mapIdToFile.get(fileId);
+      if (file) {
+        log(`xClose ${file.path}`);
+
+        this.#mapIdToFile.delete(fileId);
+        if (file.flags & VFS.SQLITE_OPEN_DELETEONCLOSE) {
+          this.#idb.run('readwrite', ({blocks}) => {
+            blocks.delete(IDBKeyRange.bound([file.path], [file.path, []]));
+          });
         }
-        return VFS.SQLITE_OK;
-      } catch (e) {
-        console.error(e);
-        return VFS.SQLITE_IOERR;
       }
-    });
+      return VFS.SQLITE_OK;
+    } catch (e) {
+      console.error(e);
+      return VFS.SQLITE_IOERR;
+    }
   }
 
   /**
-   * @param {number} fileId 
-   * @param {Uint8Array} pData 
+   * @param {number} fileId
+   * @param {Uint8Array} pData
    * @param {number} iOffset
    * @returns {number}
    */
@@ -201,8 +205,8 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
-   * @param {Uint8Array} pData 
+   * @param {number} fileId
+   * @param {Uint8Array} pData
    * @param {number} iOffset
    * @returns {number}
    */
@@ -230,9 +234,31 @@ export class IDBBatchAtomicVFS extends VFS.Base {
     return this.#xWriteHelper(fileId, pData, iOffset);
   }
 
+
+  async xWriteAsync(fileId, pData, iOffset) {
+    // Handle asynchronously every MAX_TASK_MILLIS milliseconds. This is
+    // tricky because Asyncify calls asynchronous methods twice: once
+    // to initiate the call and unwinds the stack, then rewinds the
+    // stack and calls again to retrieve the completed result.
+    const rewound = this.#pendingAsync.has(fileId);
+    if (rewound || performance.now() - this.#taskTimestamp > MAX_TASK_MILLIS) {
+      if (this.handleAsync !== super.handleAsync) {
+        this.#pendingAsync.add(fileId);
+      }
+      await new Promise(resolve => setTimeout(resolve));
+
+      const result = this.#xWriteHelper(fileId, pData, iOffset);
+      this.#taskTimestamp = performance.now();
+
+      if (rewound) this.#pendingAsync.delete(fileId);
+      return result;
+    }
+    return this.#xWriteHelper(fileId, pData, iOffset);
+  }
+
   /**
-   * @param {number} fileId 
-   * @param {Uint8Array} pData 
+   * @param {number} fileId
+   * @param {Uint8Array} pData
    * @param {number} iOffset
    * @returns {number}
    */
@@ -279,8 +305,8 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
-   * @param {number} iSize 
+   * @param {number} fileId
+   * @param {number} iSize
    * @returns {number}
    */
   xTruncate(fileId, iSize) {
@@ -308,8 +334,8 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
-   * @param {number} flags 
+   * @param {number} fileId
+   * @param {number} flags
    * @returns {number}
    */
   xSync(fileId, flags) {
@@ -317,7 +343,7 @@ export class IDBBatchAtomicVFS extends VFS.Base {
     // sync was recent enough.
     const rewound = this.#pendingAsync.has(fileId);
     if (rewound || this.#options.durability !== 'relaxed' ||
-        performance.now() - this.#taskTimestamp > MAX_TASK_MILLIS) {
+      performance.now() - this.#taskTimestamp > MAX_TASK_MILLIS) {
       const result = this.handleAsync(async () => {
         if (this.handleAsync !== super.handleAsync) {
           this.#pendingAsync.add(fileId);
@@ -338,8 +364,8 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
-   * @param {number} flags 
+   * @param {number} fileId
+   * @param {number} flags
    * @returns {Promise<number>}
    */
   async #xSyncHelper(fileId, flags) {
@@ -355,8 +381,8 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
-   * @param {DataView} pSize64 
+   * @param {number} fileId
+   * @param {DataView} pSize64
    * @returns {number}
    */
   xFileSize(fileId, pSize64) {
@@ -368,8 +394,8 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
-   * @param {number} flags 
+   * @param {number} fileId
+   * @param {number} flags
    * @returns {number}
    */
   xLock(fileId, flags) {
@@ -395,15 +421,15 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
-   * @param {number} flags 
+   * @param {number} fileId
+   * @param {number} flags
    * @returns {number}
    */
   xUnlock(fileId, flags) {
     return this.handleAsync(async () => {
       const file = this.#mapIdToFile.get(fileId);
       log(`xUnlock ${file.path} ${flags}`);
-      
+
       try {
         return file.locks.unlock(flags);
       } catch(e) {
@@ -414,8 +440,8 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
-   * @param {DataView} pResOut 
+   * @param {number} fileId
+   * @param {DataView} pResOut
    * @returns {number}
    */
   xCheckReservedLock(fileId, pResOut) {
@@ -430,7 +456,7 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
+   * @param {number} fileId
    * @returns {number}
    */
   xSectorSize(fileId) {
@@ -439,21 +465,21 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {number} fileId 
+   * @param {number} fileId
    * @returns {number}
    */
   xDeviceCharacteristics(fileId) {
     log('xDeviceCharacteristics');
     return VFS.SQLITE_IOCAP_BATCH_ATOMIC |
-           VFS.SQLITE_IOCAP_SAFE_APPEND |
-           VFS.SQLITE_IOCAP_SEQUENTIAL |
-           VFS.SQLITE_IOCAP_UNDELETABLE_WHEN_OPEN;
+      VFS.SQLITE_IOCAP_SAFE_APPEND |
+      VFS.SQLITE_IOCAP_SEQUENTIAL |
+      VFS.SQLITE_IOCAP_UNDELETABLE_WHEN_OPEN;
   }
 
   /**
-   * @param {number} fileId 
-   * @param {number} op 
-   * @param {DataView} pArg 
+   * @param {number} fileId
+   * @param {number} op
+   * @param {DataView} pArg
    * @returns {number}
    */
   xFileControl(fileId, op, pArg) {
@@ -573,9 +599,9 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {string} name 
-   * @param {number} flags 
-   * @param {DataView} pResOut 
+   * @param {string} name
+   * @param {number} flags
+   * @param {DataView} pResOut
    * @returns {number}
    */
   xAccess(name, flags, pResOut) {
@@ -598,33 +624,35 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   }
 
   /**
-   * @param {string} name 
-   * @param {number} syncDir 
+   * @param {string} name
+   * @param {number} syncDir
    * @returns {number}
    */
   xDelete(name, syncDir) {
-    return this.handleAsync(async () => {
-      const path = new URL(name, 'file://localhost/').pathname;
-      log(`xDelete ${path} ${syncDir}`);
+    return this.handleAsync(() => this.xDeleteAsync(name, syncDir));
+  }
 
-      try {
-        this.#idb.run('readwrite', ({blocks}) => {
-          return blocks.delete(IDBKeyRange.bound([path], [path, []]));
-        });
-        if (syncDir) {
-          await this.#idb.sync();
-        }
-        return VFS.SQLITE_OK;
-      } catch (e) {
-        console.error(e);
-        return VFS.SQLITE_IOERR;
+  async xDeleteAsync(name, syncDir) {
+    const path = new URL(name, 'file://localhost/').pathname;
+    log(`xDelete ${path} ${syncDir}`);
+
+    try {
+      this.#idb.run('readwrite', ({blocks}) => {
+        return blocks.delete(IDBKeyRange.bound([path], [path, []]));
+      });
+      if (syncDir) {
+        await this.#idb.sync();
       }
-    });
+      return VFS.SQLITE_OK;
+    } catch (e) {
+      console.error(e);
+      return VFS.SQLITE_IOERR;
+    }
   }
 
   /**
    * Purge obsolete blocks from a database file.
-   * @param {string} path 
+   * @param {string} path
    */
   async purge(path) {
     const start = Date.now();
@@ -645,17 +673,17 @@ export class IDBBatchAtomicVFS extends VFS.Base {
 
   /**
    * Conditionally schedule a purge task.
-   * @param {string} path 
-   * @param {number} nPages 
+   * @param {string} path
+   * @param {number} nPages
    */
   #maybePurge(path, nPages) {
     if (this.#options.purge === 'manual' ||
-        this.#pendingPurges.has(path) ||
-        nPages < this.#options.purgeAtLeast) {
+      this.#pendingPurges.has(path) ||
+      nPages < this.#options.purgeAtLeast) {
       // No purge needed.
       return;
     }
-    
+
     if (globalThis.requestIdleCallback) {
       globalThis.requestIdleCallback(() => {
         this.purge(path);
