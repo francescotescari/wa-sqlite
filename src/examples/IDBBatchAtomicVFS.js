@@ -57,6 +57,10 @@ export class IDBBatchAtomicVFS extends VFS.Base {
   #taskTimestamp = performance.now();
   #pendingAsync = new Set();
 
+  usedFileIDs() {
+    return new Set(this.#mapIdToFile.keys());
+  }
+
   constructor(idbDatabaseName = 'wa-sqlite', options = DEFAULT_OPTIONS) {
     super();
     this.name = idbDatabaseName;

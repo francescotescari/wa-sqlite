@@ -126,6 +126,8 @@ declare interface SQLiteVFSExtended extends SQLiteVFS {
       iOffset: number
   ): Promise<number>;
 
+  usedFileIDs(): Set<number>
+
 }
 
 /**
